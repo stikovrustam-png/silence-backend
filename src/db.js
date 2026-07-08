@@ -1,30 +1,30 @@
 // src/db.js
 // SQLite storage for the Silence messenger backend.
-// Uses a single file DB (data.sqlite). Render's free tier disk is ephemeral
-// unless you attach a persistent disk — see README for details.
+// Uses Node's built-in node:sqlite (no native compilation needed —
+// works out of the box in Termux/Android). Requires Node.js 22.5+.
 
 const path = require('path');
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data.sqlite');
-const db = new Database(DB_PATH);
+const raw = new DatabaseSync(DB_PATH);
 
-db.pragma('journal_mode = WAL');
+raw.exec('PRAGMA journal_mode = WAL;');
 
-db.exec(`
+raw.exec(`
 CREATE TABLE IF NOT EXISTS users (
   email TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   username TEXT UNIQUE,
   password_hash TEXT NOT NULL,
-  avatar TEXT,              -- base64 data URL or NULL
+  avatar TEXT,
   created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS chat_members (
-  owner_email TEXT NOT NULL,   -- whose chat list this entry belongs to
-  peer_email TEXT NOT NULL,    -- the other participant
-  position INTEGER NOT NULL,   -- ordering (0 = most recent / top)
+  owner_email TEXT NOT NULL,
+  peer_email TEXT NOT NULL,
+  position INTEGER NOT NULL,
   PRIMARY KEY (owner_email, peer_email)
 );
 
@@ -36,11 +36,11 @@ CREATE TABLE IF NOT EXISTS favorites (
 
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
-  chat_id TEXT NOT NULL,       -- deterministic id derived from the two emails
+  chat_id TEXT NOT NULL,
   from_email TEXT NOT NULL,
-  type TEXT NOT NULL,          -- text | image | video | voice | call
+  type TEXT NOT NULL,
   text TEXT,
-  media TEXT,                  -- base64 data URL or NULL
+  media TEXT,
   duration INTEGER,
   call_status TEXT,
   ts INTEGER NOT NULL,
@@ -54,5 +54,24 @@ CREATE TABLE IF NOT EXISTS settings (
   privacy_contacts_only INTEGER NOT NULL DEFAULT 0
 );
 `);
+
+// Thin wrapper that mimics the subset of the better-sqlite3 API used
+// throughout the routes (prepare().run/get/all), so route files don't
+// need to change. node:sqlite's StatementSync already has get()/all()/run(),
+// but statements must be prepared fresh each call in our usage pattern here
+// is fine performance-wise for this app's scale.
+const db = {
+  prepare(sql) {
+    const stmt = raw.prepare(sql);
+    return {
+      run: (...args) => stmt.run(...args),
+      get: (...args) => stmt.get(...args),
+      all: (...args) => stmt.all(...args),
+    };
+  },
+  exec(sql) {
+    return raw.exec(sql);
+  },
+};
 
 module.exports = db;
